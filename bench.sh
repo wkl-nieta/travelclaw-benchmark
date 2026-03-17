@@ -11,7 +11,6 @@
 #   --char    <name>         Character name (default: read from SOUL.md)
 #   --pic     <uuid>         Portrait UUID (default: read from SOUL.md)
 #   --out     <dir>          Output directory (default: /tmp/tcbench)
-#   --no-tunnel              Skip tunnel, just open locally
 #   --no-open                Don't auto-open browser
 #
 # Examples:
@@ -28,7 +27,6 @@ ROUNDS=10
 CHAR=""
 PIC=""
 OUT_DIR="/tmp/tcbench"
-TUNNEL=true
 AUTO_OPEN=true
 
 # ── Parse args ────────────────────────────────────────────────────────────────
@@ -40,7 +38,6 @@ while [[ $# -gt 0 ]]; do
     --char)     CHAR="$2";   shift 2;;
     --pic)      PIC="$2";    shift 2;;
     --out)      OUT_DIR="$2"; shift 2;;
-    --no-tunnel) TUNNEL=false; shift;;
     --no-open)  AUTO_OPEN=false; shift;;
     *) echo "Unknown option: $1"; exit 1;;
   esac
@@ -129,62 +126,45 @@ node "${BENCH_DIR}/lib/report.mjs" \
 cp "$REPORT_HTML" "${SERVE_DIR}/index.html"
 echo "  ✓ Report: ${REPORT_HTML}"
 
-# ── Step 5: Serve + tunnel ────────────────────────────────────────────────────
+# ── Step 5: Tunnel (always on, non-blocking) ─────────────────────────────────
+echo ""
+echo "🌐 Starting tunnel..."
+
+# Kill any stale servers on port 8787
+pkill -f "cloudflared.*8787" 2>/dev/null || true
+pkill -f "python3.*8787" 2>/dev/null || true
+sleep 1
+
+# Start HTTP server in background via nohup
+nohup python3 -m http.server 8787 --directory "$SERVE_DIR" > /dev/null 2>&1 &
+
+# Start cloudflared tunnel in background via nohup
+TUNNEL_LOG="${OUT_DIR}/tunnel.log"
+nohup cloudflared tunnel --url http://localhost:8787 > "$TUNNEL_LOG" 2>&1 &
+
+# Wait up to 20s for URL to appear
+echo "  Waiting for tunnel URL..."
+TUNNEL_URL=""
+for i in $(seq 1 20); do
+  TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "$TUNNEL_LOG" 2>/dev/null | head -1 || true)
+  [ -n "$TUNNEL_URL" ] && break
+  sleep 1
+done
+
+echo ""
+echo "╔══════════════════════════════════════════════╗"
+echo "║  ✅ Benchmark complete!                       ║"
+echo "╚══════════════════════════════════════════════╝"
+echo ""
+if [ -n "$TUNNEL_URL" ]; then
+  echo "  🔗 Public URL: ${TUNNEL_URL}"
+else
+  echo "  ⚠️  Tunnel URL not found (check ${OUT_DIR}/tunnel.log)"
+fi
+echo "  📄 Local:    ${REPORT_HTML}"
+echo "  📋 Results:  ${RESULTS_JSON}"
+echo ""
+
 if [ "$AUTO_OPEN" = true ]; then
   open "$REPORT_HTML" 2>/dev/null || true
-fi
-
-if [ "$TUNNEL" = true ]; then
-  echo ""
-  echo "🌐 Starting tunnel..."
-
-  # Kill any existing cloudflared tunnels on port 8787
-  pkill -f "cloudflared.*8787" 2>/dev/null || true
-  sleep 1
-
-  # Start Python HTTP server in background
-  pkill -f "python3.*8787" 2>/dev/null || true
-  python3 -m http.server 8787 --directory "$SERVE_DIR" > /dev/null 2>&1 &
-  HTTP_PID=$!
-  sleep 1
-
-  # Start cloudflared tunnel, capture URL
-  TUNNEL_LOG="${OUT_DIR}/tunnel.log"
-  cloudflared tunnel --url http://localhost:8787 > "$TUNNEL_LOG" 2>&1 &
-  TUNNEL_PID=$!
-
-  # Wait for URL to appear
-  echo "  Waiting for tunnel URL..."
-  TUNNEL_URL=""
-  for i in $(seq 1 20); do
-    TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "$TUNNEL_LOG" 2>/dev/null | head -1 || true)
-    [ -n "$TUNNEL_URL" ] && break
-    sleep 1
-  done
-
-  if [ -n "$TUNNEL_URL" ]; then
-    echo ""
-    echo "╔══════════════════════════════════════════════╗"
-    echo "║  ✅ Benchmark complete!                       ║"
-    echo "╚══════════════════════════════════════════════╝"
-    echo ""
-    echo "  🔗 Public URL: ${TUNNEL_URL}"
-    echo "  📄 Local:      ${REPORT_HTML}"
-    echo "  📋 Results:    ${RESULTS_JSON}"
-    echo ""
-    echo "  (Ctrl+C to stop tunnel)"
-    wait $TUNNEL_PID
-  else
-    echo "  ⚠️  Tunnel URL not found — serving locally only"
-    echo "  📄 Report: ${REPORT_HTML}"
-    kill $HTTP_PID 2>/dev/null || true
-  fi
-else
-  echo ""
-  echo "╔══════════════════════════════════════════════╗"
-  echo "║  ✅ Benchmark complete!                       ║"
-  echo "╚══════════════════════════════════════════════╝"
-  echo ""
-  echo "  📄 Report:   ${REPORT_HTML}"
-  echo "  📋 Results:  ${RESULTS_JSON}"
 fi
