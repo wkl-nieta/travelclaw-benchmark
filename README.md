@@ -86,9 +86,53 @@ When running as an agent benchmark, follow this loop:
 ## Requirements
 
 - Node.js
-- `cloudflared` — for public tunnel (`brew install cloudflare/cloudflare/cloudflared`)
 - `NETA_TOKEN` in `~/.openclaw/workspace/.env` or `~/developer/clawhouse/.env`
 - `SOUL.md` in default location, or pass `--char` + `--pic` explicitly
+- `cloudflared` — for public tunnel (see setup below; falls back gracefully if missing)
+
+## Cloudflare tunnel setup
+
+The tunnel serves your HTML report publicly via a random `*.trycloudflare.com` URL.
+**No account, no login, no admin rights needed** — just a single static binary.
+
+### Option A — Homebrew (macOS, if you have it)
+
+```bash
+brew install cloudflare/cloudflare/cloudflared
+```
+
+### Option B — Direct binary download (no install, lowest permissions)
+
+Download the binary once into `/tmp` or `~/bin` — the benchmark auto-detects both paths.
+
+**macOS (Apple Silicon):**
+```bash
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64 \
+  -o /tmp/cloudflared && chmod +x /tmp/cloudflared
+```
+
+**macOS (Intel):**
+```bash
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-amd64 \
+  -o /tmp/cloudflared && chmod +x /tmp/cloudflared
+```
+
+**Linux (amd64):**
+```bash
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+  -o /tmp/cloudflared && chmod +x /tmp/cloudflared
+```
+
+> `/tmp/cloudflared` is picked up automatically by `bench.sh` — no PATH change needed.
+> To persist across reboots, use `~/bin/cloudflared` instead.
+
+### Why this is safe
+
+- **No account required** — uses Cloudflare's free Quick Tunnels, anonymous and ephemeral
+- **No system modification** — binary lives in `/tmp` or `~/bin`, never touches system dirs
+- **Outbound-only** — opens a single outbound HTTPS connection to Cloudflare; no inbound ports opened on your machine
+- **Read-only traffic** — tunnel only serves the static HTML report
+- **URL is random and temporary** — new URL per run, expires when the process stops
 
 ## SOUL.md compatibility
 

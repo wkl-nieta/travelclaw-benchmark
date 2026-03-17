@@ -44,6 +44,23 @@ while [[ $# -gt 0 ]]; do
 done
 
 BENCH_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# ── Resolve cloudflared (system PATH → /tmp → ~/bin → script dir) ─────────────
+CLOUDFLARED="cloudflared"
+if ! command -v cloudflared &>/dev/null; then
+  for candidate in /tmp/cloudflared "$HOME/bin/cloudflared" "${BENCH_DIR}/cloudflared"; do
+    if [ -x "$candidate" ]; then
+      CLOUDFLARED="$candidate"
+      echo "  ℹ️  Using cloudflared from: $candidate"
+      break
+    fi
+  done
+  if [ "$CLOUDFLARED" = "cloudflared" ]; then
+    echo "⚠️  cloudflared not found — tunnel will be skipped."
+    echo "   Install: see README § Cloudflare tunnel setup"
+    CLOUDFLARED=""
+  fi
+fi
 TARGET_DIR="/tmp/tcbench-target-$(echo $REPO | tr '/' '-')-${BRANCH}"
 RESULTS_JSON="${OUT_DIR}/results_${BRANCH}_$(date +%Y%m%d_%H%M%S).json"
 REPORT_HTML="${OUT_DIR}/report_${BRANCH}_$(date +%Y%m%d_%H%M%S).html"
@@ -126,30 +143,32 @@ node "${BENCH_DIR}/lib/report.mjs" \
 cp "$REPORT_HTML" "${SERVE_DIR}/index.html"
 echo "  ✓ Report: ${REPORT_HTML}"
 
-# ── Step 5: Tunnel (always on, non-blocking) ─────────────────────────────────
-echo ""
-echo "🌐 Starting tunnel..."
-
-# Kill any stale servers on port 8787
-pkill -f "cloudflared.*8787" 2>/dev/null || true
-pkill -f "python3.*8787" 2>/dev/null || true
-sleep 1
-
-# Start HTTP server in background via nohup
-nohup python3 -m http.server 8787 --directory "$SERVE_DIR" > /dev/null 2>&1 &
-
-# Start cloudflared tunnel in background via nohup
-TUNNEL_LOG="${OUT_DIR}/tunnel.log"
-nohup cloudflared tunnel --url http://localhost:8787 > "$TUNNEL_LOG" 2>&1 &
-
-# Wait up to 20s for URL to appear
-echo "  Waiting for tunnel URL..."
+# ── Step 5: Tunnel (non-blocking) ────────────────────────────────────────────
 TUNNEL_URL=""
-for i in $(seq 1 20); do
-  TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "$TUNNEL_LOG" 2>/dev/null | head -1 || true)
-  [ -n "$TUNNEL_URL" ] && break
+if [ -n "$CLOUDFLARED" ]; then
+  echo ""
+  echo "🌐 Starting tunnel..."
+
+  # Kill any stale servers on port 8787
+  pkill -f "cloudflared.*8787" 2>/dev/null || true
+  pkill -f "python3.*8787" 2>/dev/null || true
   sleep 1
-done
+
+  # Start HTTP server in background via nohup
+  nohup python3 -m http.server 8787 --directory "$SERVE_DIR" > /dev/null 2>&1 &
+
+  # Start cloudflared tunnel in background via nohup
+  TUNNEL_LOG="${OUT_DIR}/tunnel.log"
+  nohup "$CLOUDFLARED" tunnel --url http://localhost:8787 > "$TUNNEL_LOG" 2>&1 &
+
+  # Wait up to 20s for URL to appear
+  echo "  Waiting for tunnel URL..."
+  for i in $(seq 1 20); do
+    TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "$TUNNEL_LOG" 2>/dev/null | head -1 || true)
+    [ -n "$TUNNEL_URL" ] && break
+    sleep 1
+  done
+fi
 
 echo ""
 echo "╔══════════════════════════════════════════════╗"
@@ -158,6 +177,8 @@ echo "╚═══════════════════════�
 echo ""
 if [ -n "$TUNNEL_URL" ]; then
   echo "  🔗 Public URL: ${TUNNEL_URL}"
+elif [ -z "$CLOUDFLARED" ]; then
+  echo "  ℹ️  No tunnel (cloudflared not found — see README)"
 else
   echo "  ⚠️  Tunnel URL not found (check ${OUT_DIR}/tunnel.log)"
 fi
