@@ -66,6 +66,8 @@ echo ""
 # ── Step 1: Clone / update target repo ───────────────────────────────────────
 echo "📦 Setting up target: ${REPO}@${BRANCH}"
 
+CLONE_START=$(python3 -c "import time; print(int(time.time()*1000))")
+FRESH_CLONE=false
 if [ -d "${TARGET_DIR}/.git" ]; then
   echo "  Updating existing clone..."
   git -C "$TARGET_DIR" fetch origin
@@ -73,8 +75,10 @@ if [ -d "${TARGET_DIR}/.git" ]; then
   git -C "$TARGET_DIR" pull origin "$BRANCH" --ff-only 2>/dev/null || true
 else
   echo "  Cloning..."
+  FRESH_CLONE=true
   git clone --branch "$BRANCH" --depth 1 "https://github.com/${REPO}.git" "$TARGET_DIR"
 fi
+CLONE_MS=$(($(python3 -c "import time; print(int(time.time()*1000))") - CLONE_START))
 
 TRAVEL_JS="${TARGET_DIR}/travel.js"
 if [ ! -f "$TRAVEL_JS" ]; then
@@ -105,6 +109,8 @@ node "${BENCH_DIR}/lib/run.mjs" \
   --travel "$TRAVEL_JS" \
   --rounds "$ROUNDS" \
   --out "$RESULTS_JSON" \
+  --clone-ms "$CLONE_MS" \
+  --fresh-clone "$FRESH_CLONE" \
   ${CHAR:+--char "$CHAR"} \
   ${PIC:+--pic "$PIC"}
 
